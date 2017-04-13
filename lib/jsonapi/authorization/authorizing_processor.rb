@@ -234,6 +234,14 @@ module JSONAPI
         end
       end
 
+      def resource_class_for_type(type)
+        if @resource_klass.respond_to?(:resource_klass_for)
+          @resource_klass.resource_klass_for(type) # JR >= 0.10
+        else
+          @resource_klass.resource_for(type) # JR <= 0.9
+        end
+      end
+
       def resource_class_for_relationship(assoc_name)
         @resource_klass._relationship(assoc_name).resource_klass
       end
@@ -250,7 +258,7 @@ module JSONAPI
           data[rel_type].flat_map do |assoc_name, assoc_value|
             case assoc_value
             when Hash # polymorphic relationship
-              resource_class = @resource_klass.resource_for(assoc_value[:type].to_s)
+              resource_class = resource_class_for_type(assoc_value[:type].to_s)
               resource_class.find_by_key(assoc_value[:id], context: context)._model
             else
               resource_class = resource_class_for_relationship(assoc_name)
@@ -270,7 +278,7 @@ module JSONAPI
             related_models =
               case assoc_value
               when Hash # polymorphic relationship
-                resource_class = @resource_klass.resource_for(assoc_value[:type].to_s)
+                resource_class = resource_class_for_type(assoc_value[:type].to_s)
                 resource_class.find_by_key(assoc_value[:id], context: context)._model
               when Array
                 resource_class = resource_class_for_relationship(assoc_name)
