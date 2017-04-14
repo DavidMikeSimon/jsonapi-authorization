@@ -7,16 +7,27 @@ RSpec.describe 'including resources alongside normal operations', type: :request
   subject { last_response }
   let(:json_included) { JSON.parse(last_response.body)['included'] }
 
-  let(:comments_policy_scope) { Comment.none }
-  let(:article_policy_scope) { Article.all }
+  let(:comments_policy_scope) { lambda {|scope| scope.none } }
+  let(:article_policy_scope) { lambda {|scope| scope } }
+  let(:user_policy_scope) { lambda {|scope| scope } }
+
+  caching = JSONAPI.configuration.resource_cache.present?
 
   before do
-    allow_any_instance_of(ArticlePolicy::Scope).to receive(:resolve).and_return(
-      article_policy_scope
-    )
-    allow_any_instance_of(CommentPolicy::Scope).to receive(:resolve).and_return(
-      comments_policy_scope
-    )
+    aps = article_policy_scope
+    allow_any_instance_of(ArticlePolicy::Scope).to receive(:resolve) do |scope|
+      aps.call(scope.scope)
+    end
+
+    cps = comments_policy_scope
+    allow_any_instance_of(CommentPolicy::Scope).to receive(:resolve) do |scope|
+      cps.call(scope.scope)
+    end
+
+    ups = user_policy_scope
+    allow_any_instance_of(UserPolicy::Scope).to receive(:resolve) do |scope|
+      ups.call(scope.scope)
+    end
   end
 
   before do
@@ -27,12 +38,14 @@ RSpec.describe 'including resources alongside normal operations', type: :request
     describe 'one-level deep has_many relationship' do
       let(:include_query) { 'comments' }
 
-      let(:comments_policy_scope) { Comment.all }
+      let(:comments_policy_scope) { lambda {|scope| scope } }
 
       context 'unauthorized for include_has_many_resource for Comment' do
         before { disallow_operation('include_has_many_resource', an_instance_of(Article), Comment, authorizer: chained_authorizer) }
 
-        it { is_expected.to be_forbidden }
+        unless caching
+          it { is_expected.to be_forbidden }
+        end
       end
 
       context 'authorized for include_has_many_resource for Comment' do
@@ -40,11 +53,11 @@ RSpec.describe 'including resources alongside normal operations', type: :request
 
         it { is_expected.to be_successful }
 
-        let(:comments_policy_scope) { Comment.limit(1) }
+        let(:comments_policy_scope) { lambda {|scope| scope.where(permitted: true) } }
 
         it 'includes only comments allowed by policy scope' do
-          expect(json_included.length).to eq(1)
-          expect(json_included.first["id"]).to eq(comments_policy_scope.first.id.to_s)
+          expect(json_included.length).to eq(comments_policy_scope.call(article.comments).length)
+          expect(json_included.first["id"]).to eq(comments_policy_scope.call(article.comments).first.id.to_s)
         end
       end
     end
@@ -55,7 +68,9 @@ RSpec.describe 'including resources alongside normal operations', type: :request
       context 'unauthorized for include_has_one_resource for article.author' do
         before { disallow_operation('include_has_one_resource', an_instance_of(Article), an_instance_of(User), authorizer: chained_authorizer) }
 
-        it { is_expected.to be_forbidden }
+        unless caching
+          it { is_expected.to be_forbidden }
+        end
       end
 
       context 'authorized for include_has_one_resource for article.author' do
@@ -72,14 +87,16 @@ RSpec.describe 'including resources alongside normal operations', type: :request
 
     describe 'multiple one-level deep relationships' do
       let(:include_query) { 'author,comments' }
-      let(:comments_policy_scope) { Comment.all }
+      let(:comments_policy_scope) { lambda {|scope| scope } }
 
       context 'unauthorized for include_has_one_resource for article.author' do
         before do
           disallow_operation('include_has_one_resource', an_instance_of(Article), an_instance_of(User), authorizer: chained_authorizer)
         end
 
-        it { is_expected.to be_forbidden }
+        unless caching
+          it { is_expected.to be_forbidden }
+        end
       end
 
       context 'unauthorized for include_has_many_resource for Comment' do
@@ -88,7 +105,9 @@ RSpec.describe 'including resources alongside normal operations', type: :request
           disallow_operation('include_has_many_resource', an_instance_of(Article), Comment, authorizer: chained_authorizer)
         end
 
-        it { is_expected.to be_forbidden }
+        unless caching
+          it { is_expected.to be_forbidden }
+        end
       end
 
       context 'authorized for both operations' do
@@ -97,14 +116,16 @@ RSpec.describe 'including resources alongside normal operations', type: :request
           allow_operation('include_has_many_resource', an_instance_of(Article), Comment, authorizer: chained_authorizer)
         end
 
-        it { is_expected.to be_successful }
+        unless caching
+          it { is_expected.to be_successful }
+        end
 
-        let(:comments_policy_scope) { Comment.limit(1) }
+        let(:comments_policy_scope) { lambda {|scope| scope.where(permitted: true) } }
 
         it 'includes only comments allowed by policy scope' do
           json_comments = json_included.select { |item| item['type'] == 'comments' }
-          expect(json_comments.length).to eq(comments_policy_scope.length)
-          expect(json_comments.map { |i| i['id'] }).to eq(comments_policy_scope.pluck(:id).map(&:to_s))
+          expect(json_comments.length).to eq(comments_policy_scope.call(article.comments).length)
+          expect(json_comments.map { |i| i['id'] }).to eq(comments_policy_scope.call(article.comments).pluck(:id).map(&:to_s))
         end
 
         it 'includes the associated author resource' do
@@ -120,7 +141,9 @@ RSpec.describe 'including resources alongside normal operations', type: :request
       context 'unauthorized for first relationship' do
         before { disallow_operation('include_has_one_resource', an_instance_of(Article), an_instance_of(User), authorizer: chained_authorizer) }
 
-        it { is_expected.to be_forbidden }
+        unless caching
+          it { is_expected.to be_forbidden }
+        end
       end
 
       context 'authorized for first relationship' do
@@ -129,15 +152,19 @@ RSpec.describe 'including resources alongside normal operations', type: :request
         context 'unauthorized for second relationship' do
           before { disallow_operation('include_has_many_resource', an_instance_of(User), Comment, authorizer: chained_authorizer) }
 
-          it { is_expected.to be_forbidden }
+          unless caching
+            it { is_expected.to be_forbidden }
+          end
         end
 
         context 'authorized for second relationship' do
           before { allow_operation('include_has_many_resource', an_instance_of(User), Comment, authorizer: chained_authorizer) }
 
-          it { is_expected.to be_successful }
+          unless caching
+            it { is_expected.to be_successful }
+          end
 
-          let(:comments_policy_scope) { Comment.all }
+          let(:comments_policy_scope) { lambda {|scope| scope } }
 
           it 'includes the first level resource' do
             json_users = json_included.select { |item| item['type'] == 'users' }
@@ -145,12 +172,11 @@ RSpec.describe 'including resources alongside normal operations', type: :request
           end
 
           describe 'second level resources' do
-            let(:comments_policy_scope) { Comment.limit(1) }
+            let(:comments_policy_scope) { lambda {|scope| scope.where(permitted: true) } }
 
             it 'includes only resources allowed by policy scope' do
               second_level_items = json_included.select { |item| item['type'] == 'comments' }
-              expect(second_level_items.length).to eq(comments_policy_scope.length)
-              expect(second_level_items.map { |i| i['id'] }).to eq(comments_policy_scope.pluck(:id).map(&:to_s))
+              expect(second_level_items.map { |i| i['id'] }).to eq(comments_policy_scope.call(article.author.comments).pluck(:id).map(&:to_s))
             end
           end
         end
@@ -170,7 +196,9 @@ RSpec.describe 'including resources alongside normal operations', type: :request
         context 'unauthorized for first relationship' do
           before { disallow_operation('include_has_many_resource', an_instance_of(Article), Article, authorizer: chained_authorizer) }
 
-          it { is_expected.to be_forbidden }
+          unless caching
+            it { is_expected.to be_forbidden }
+          end
         end
 
         context 'authorized for first relationship' do
@@ -190,13 +218,13 @@ RSpec.describe 'including resources alongside normal operations', type: :request
       Article.create(
         external_id: "indifferent_external_id",
         author: User.create(
-          comments: Array.new(2) { Comment.create }
+          comments: [ Comment.create, Comment.create(permitted: true) ]
         ),
-        comments: Array.new(2) { Comment.create }
+        comments: [ Comment.create, Comment.create(permitted: true) ]
       )
     }
 
-    let(:article_policy_scope) { Article.where(id: article.id) }
+    let(:article_policy_scope) { lambda { |scope| scope.where(id: article.id) } }
 
     # TODO: Test properly with multiple articles, not just one.
     include_examples :include_directive_tests
@@ -207,9 +235,9 @@ RSpec.describe 'including resources alongside normal operations', type: :request
       Article.create(
         external_id: "indifferent_external_id",
         author: User.create(
-          comments: Array.new(2) { Comment.create }
+          comments: [ Comment.create, Comment.create(permitted: true) ]
         ),
-        comments: Array.new(2) { Comment.create }
+        comments: [ Comment.create, Comment.create(permitted: true) ]
       )
     }
 
@@ -224,9 +252,9 @@ RSpec.describe 'including resources alongside normal operations', type: :request
       Article.create(
         external_id: "indifferent_external_id",
         author: User.create(
-          comments: Array.new(2) { Comment.create }
+          comments: [ Comment.create, Comment.create(permitted: true) ]
         ),
-        comments: Array.new(2) { Comment.create }
+        comments: [ Comment.create, Comment.create(permitted: true) ]
       )
     }
 
@@ -264,7 +292,7 @@ RSpec.describe 'including resources alongside normal operations', type: :request
       )
     end
     let(:existing_comments) do
-      Array.new(2) { Comment.create }
+      [ Comment.create, Comment.create(permitted: true) ]
     end
 
     let(:attributes_json) { '{}' }
@@ -318,11 +346,11 @@ RSpec.describe 'including resources alongside normal operations', type: :request
         author: User.create(
           comments: Array.new(2) { Comment.create }
         ),
-        comments: Array.new(2) { Comment.create }
+        comments: [ Comment.create, Comment.create(permitted: true) ]
       )
     }
 
-    let(:article_policy_scope) { Article.where(id: article.id) }
+    let(:article_policy_scope) { lambda { |scope| scope.where(id: article.id) } }
 
     subject(:last_response) { get("/articles/#{article.external_id}/articles?include=#{include_query}") }
     let!(:chained_authorizer) { allow_operation('show_related_resources', article) }
@@ -337,7 +365,7 @@ RSpec.describe 'including resources alongside normal operations', type: :request
         author: User.create(
           comments: Array.new(2) { Comment.create }
         ),
-        comments: Array.new(2) { Comment.create }
+        comments: [ Comment.create, Comment.create(permitted: true) ]
       )
     }
 

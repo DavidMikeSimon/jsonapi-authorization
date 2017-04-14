@@ -29,6 +29,7 @@ module JSONAPI
       end
 
       def authorize_include_directive
+        return if JSONAPI.configuration.resource_cache # Cache doesn't give real Resource instances
         return if result.is_a?(::JSONAPI::ErrorsOperationResult)
         resources = Array.wrap(
           if result.respond_to?(:resources)

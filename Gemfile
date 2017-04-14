@@ -20,6 +20,8 @@ end
 case jsonapi_resources_version
 when 'default'
   gem 'jsonapi-resources', '0.9'
+when /git:(.+)/
+  gem 'jsonapi-resources', github: 'cerebris/jsonapi-resources', ref: $1
 else
   gem 'jsonapi-resources', jsonapi_resources_version
 end

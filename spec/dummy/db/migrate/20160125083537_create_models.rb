@@ -4,19 +4,24 @@ class CreateModels < ActiveRecord::Migration
       t.string :article_id
       t.belongs_to :author
       t.belongs_to :reviewing_user, references: :user
+      t.boolean :permitted
+      t.timestamps
     end
 
     create_table :users do |t|
+      t.timestamps
     end
 
     create_table :articles do |t|
       t.string :external_id, null: false
       t.references :author
       t.string :blank_value
+      t.timestamps
     end
 
     create_table :tags do |t|
       t.references :taggable, polymorphic: true
+      t.timestamps
     end
   end
 end
